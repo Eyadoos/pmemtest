@@ -1,0 +1,33 @@
+/Applications/CLion.app/Contents/bin/cmake/mac/bin/cmake -DCMAKE_BUILD_TYPE=Debug -G "CodeBlocks - Unix Makefiles" /Users/eyadmhanna/Desktop/pmem
+-- The C compiler identification is AppleClang 11.0.0.11000033
+-- The CXX compiler identification is AppleClang 11.0.0.11000033
+-- Check for working C compiler: /Library/Developer/CommandLineTools/usr/bin/cc
+-- Check for working C compiler: /Library/Developer/CommandLineTools/usr/bin/cc -- works
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Check for working CXX compiler: /Library/Developer/CommandLineTools/usr/bin/c++
+-- Check for working CXX compiler: /Library/Developer/CommandLineTools/usr/bin/c++ -- works
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Looking for pthread.h
+-- Looking for pthread.h - found
+-- Looking for pthread_create
+-- Looking for pthread_create - found
+-- Found Threads: TRUE  
+-- Found PkgConfig: /usr/local/bin/pkg-config (found version "0.29.2") 
+-- Searching for PMDK
+-- Checking for module 'libpmemobj++>=1.5'
+--   No package 'libpmemobj++' found
+CMake Error at /Applications/CLion.app/Contents/bin/cmake/mac/share/cmake-3.14/Modules/FindPkgConfig.cmake:457 (message):
+  A required package was not found
+Call Stack (most recent call first):
+  /Applications/CLion.app/Contents/bin/cmake/mac/share/cmake-3.14/Modules/FindPkgConfig.cmake:642 (_pkg_check_modules_internal)
+  CMakeLists.txt:19 (pkg_check_modules)
+
+
+-- Configuring incomplete, errors occurred!
+See also "/Users/eyadmhanna/Desktop/pmem/cmake-build-debug/CMakeFiles/CMakeOutput.log".

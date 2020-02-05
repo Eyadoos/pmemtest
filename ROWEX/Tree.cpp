@@ -1,8 +1,8 @@
 #include <assert.h>
 #include <algorithm>
-#include "Tree.h"
+#include "Include/Tree.h"
 #include "N.cpp"
-#include "../Epoche.cpp"
+#include "../Include/Epoche.cpp"
 
 namespace ART_ROWEX {
 

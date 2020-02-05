@@ -1,8 +1,8 @@
 #include <assert.h>
 #include <algorithm>
 #include <iostream>
-#include "Tree.h"
-#include "../Epoche.cpp"
+#include "Include/Tree.h"
+#include "../Include/Epoche.cpp"
 #include "N.cpp"
 
 namespace ART_unsynchronized {

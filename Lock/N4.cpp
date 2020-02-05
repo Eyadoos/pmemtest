@@ -2,7 +2,7 @@
 #include <algorithm>
 #include "Include/N.h"
 
-namespace ART_OLC {
+namespace ART_LC {
 
     void N4::deleteChildren() {
         for (uint32_t i = 0; i < count; ++i) {
@@ -19,27 +19,31 @@ namespace ART_OLC {
         return false;
     }
 
-    void N4::insert(uint8_t key, N *n) {
+    void N4::insert(pool_base &pop, uint8_t key, N *n) {
         unsigned pos;
         for (pos = 0; (pos < count) && (keys[pos] < key); pos++);
+	transaction::run(pop, [&]{
         memmove(keys + pos + 1, keys + pos, count - pos);
         memmove(children + pos + 1, children + pos, (count - pos) * sizeof(N*));
         keys[pos] = key;
         children[pos] = n;
         count++;
+	});
     }
 
     template<class NODE>
-    void N4::copyTo(NODE *n) const {
+    void N4::copyTo(pool_base &pop, NODE n) const {
         for (uint32_t i = 0; i < count; ++i) {
-            n->insert(keys[i], children[i]);
+            n->insert(pop, keys[i], children[i]);
         }
     }
 
-    bool N4::change(uint8_t key, N *val) {
+    bool N4::change(pool_base &pop, uint8_t key, N *val) {
         for (uint32_t i = 0; i < count; ++i) {
             if (keys[i] == key) {
-                children[i] = val;
+		transaction::run(pop, [&]{
+	                children[i] = val;
+		});
                 return true;
             }
         }
@@ -56,18 +60,20 @@ namespace ART_OLC {
         return nullptr;
     }
 
-    void N4::remove(uint8_t k) {
+    void N4::remove(pool_base &pop, uint8_t k) {
         for (uint32_t i = 0; i < count; ++i) {
             if (keys[i] == k) {
+		transaction::run(pop, [&]{
                 memmove(keys + i, keys + i + 1, count - i - 1);
                 memmove(children + i, children + i + 1, (count - i - 1) * sizeof(N *));
                 count--;
+		});
                 return;
             }
         }
     }
 
-    N *N4::getAnyChild() const {
+    N *N4::getAnyChild() {
         N *anyChild = nullptr;
         for (uint32_t i = 0; i < count; ++i) {
             if (N::isLeaf(children[i])) {
@@ -89,7 +95,7 @@ namespace ART_OLC {
     }
 
     uint64_t N4::getChildren(uint8_t start, uint8_t end, std::tuple<uint8_t, N *> *&children,
-                         uint32_t &childrenCount) const {
+                         uint32_t &childrenCount) {
         restart:
         bool needRestart = false;
         uint64_t v;

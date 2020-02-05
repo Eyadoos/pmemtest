@@ -2,7 +2,7 @@
 #include <algorithm>
 #include "Include/N.h"
 
-namespace ART_OLC {
+namespace ART_LC {
 
     bool N256::isFull() const {
         return false;
@@ -21,13 +21,15 @@ namespace ART_OLC {
         }
     }
 
-    void N256::insert(uint8_t key, N *val) {
-        children[key] = val;
-        count++;
+    void N256::insert(pool_base &pop, uint8_t key, N *val) {
+	transaction::run(pop, [&]{
+	        children[key] = val;
+        	count++;
+	});
     }
 
     template<class NODE>
-    void N256::copyTo(NODE *n) const {
+    void N256::copyTo(NODE n) const {
         for (int i = 0; i < 256; ++i) {
             if (children[i] != nullptr) {
                 n->insert(i, children[i]);
@@ -35,8 +37,10 @@ namespace ART_OLC {
         }
     }
 
-    bool N256::change(uint8_t key, N *n) {
-        children[key] = n;
+    bool N256::change(pool_base &pop, uint8_t key, N *n) {
+	transaction::run(pop, [&]{
+	        children[key] = n;
+	});
         return true;
     }
 
@@ -44,12 +48,14 @@ namespace ART_OLC {
         return children[k];
     }
 
-    void N256::remove(uint8_t k) {
-        children[k] = nullptr;
-        count--;
+    void N256::remove(pool_base &pop, uint8_t k) {
+	transaction::run(pop, [&]{
+	        children[k] = nullptr;
+        	count--;
+	});
     }
 
-    N *N256::getAnyChild() const {
+    N *N256::getAnyChild() {
         N *anyChild = nullptr;
         for (uint64_t i = 0; i < 256; ++i) {
             if (children[i] != nullptr) {
@@ -64,7 +70,7 @@ namespace ART_OLC {
     }
 
     uint64_t N256::getChildren(uint8_t start, uint8_t end, std::tuple<uint8_t, N *> *&children,
-                           uint32_t &childrenCount) const {
+                           uint32_t &childrenCount) {
         restart:
         bool needRestart = false;
         uint64_t v;

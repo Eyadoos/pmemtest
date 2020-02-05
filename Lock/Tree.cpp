@@ -1,12 +1,13 @@
 #include <assert.h>
 #include <algorithm>
+
 #include "Include/Tree.h"
 #include "N.cpp"
 #include "../Include/Epoche.cpp"
 #include "../Include/Key.h"
 
 
-namespace ART_OLC {
+namespace ART_LC {
 
     Tree::Tree(LoadKeyFunction loadKey) : root(new N256( nullptr, 0)), loadKey(loadKey) {
     }
@@ -20,7 +21,7 @@ namespace ART_OLC {
         return ThreadInfo(this->epoche);
     }
 
-    TID Tree::lookup(const Key &k, ThreadInfo &threadEpocheInfo) const {
+    TID Tree::lookup(pool_base &pop, const Key &k, ThreadInfo &threadEpocheInfo) const {
         EpocheGuardReadonly epocheGuard(threadEpocheInfo);
         restart:
         bool needRestart = false;
@@ -32,12 +33,12 @@ namespace ART_OLC {
         bool optimisticPrefixMatch = false;
 
         node = root;
-        v = node->readLockOrRestart(needRestart);
+        v = node->readLockOrRestart(pop, needRestart);
         if (needRestart) goto restart;
         while (true) {
             switch (checkPrefix(node, k, level)) { // increases level
                 case CheckPrefixResult::NoMatch:
-                    node->readUnlockOrRestart(v, needRestart);
+                    node->readUnlockOrRestart(pop, v, needRestart);
                     if (needRestart) goto restart;
                     return 0;
                 case CheckPrefixResult::OptimisticMatch:
@@ -49,34 +50,38 @@ namespace ART_OLC {
                     }
                     parentNode = node;
                     node = N::getChild(k[level], parentNode);
-                    parentNode->checkOrRestart(v,needRestart);
-                    if (needRestart) goto restart;
+//                    parentNode->checkOrRestart(v,needRestart);
+//                    if (needRestart) goto restart;
 
                     if (node == nullptr) {
+                        parentNode->readUnlockOrRestart(pop, v, needRestart);
+                        if (needRestart) goto restart;
                         return 0;
                     }
                     if (N::isLeaf(node)) {
-                        parentNode->readUnlockOrRestart(v, needRestart);
+                        parentNode->readUnlockOrRestart(pop, v, needRestart);
                         if (needRestart) goto restart;
 
                         TID tid = N::getLeaf(node);
                         if (level < k.getKeyLen() - 1 || optimisticPrefixMatch) {
-                            return checkKey(tid, k);
+                            return checkKey(pop, tid, k);
                         }
                         return tid;
                     }
                     level++;
             }
-            uint64_t nv = node->readLockOrRestart(needRestart);
+            uint64_t nv = node->readLockOrRestart(pop, needRestart);
+            if (needRestart) goto restart;
+            node->readLockOrRestart(pop, needRestart);
             if (needRestart) goto restart;
 
-            parentNode->readUnlockOrRestart(v, needRestart);
+            parentNode->readUnlockOrRestart(pop, v, needRestart);
             if (needRestart) goto restart;
             v = nv;
         }
     }
 
-    bool Tree::lookupRange(const Key &start, const Key &end, Key &continueKey, TID result[],
+    bool Tree::lookupRange(pool_base &pop, const Key &start, const Key &end, Key &continueKey, TID result[],
                                 std::size_t resultSize, std::size_t &resultsFound, ThreadInfo &threadEpocheInfo) const {
         for (uint32_t i = 0; i < std::min(start.getKeyLen(), end.getKeyLen()); ++i) {
             if (start[i] > end[i]) {
@@ -88,7 +93,7 @@ namespace ART_OLC {
         }
         EpocheGuard epocheGuard(threadEpocheInfo);
         TID toContinue = 0;
-        std::function<void(const N *)> copy = [&result, &resultSize, &resultsFound, &toContinue, &copy](const N *node) {
+        std::function<void(N *)> copy = [&result, &resultSize, &resultsFound, &toContinue, &copy](N *node) {
             if (N::isLeaf(node)) {
                 if (resultsFound == resultSize) {
                     toContinue = N::getLeaf(node);
@@ -101,7 +106,7 @@ namespace ART_OLC {
                 uint32_t childrenCount = 0;
                 N::getChildren(node, 0u, 255u, children, childrenCount);
                 for (uint32_t i = 0; i < childrenCount; ++i) {
-                    const N *n = std::get<1>(children[i]);
+                    N *n = std::get<1>(children[i]);
                     copy(n);
                     if (toContinue != 0) {
                         break;
@@ -109,8 +114,8 @@ namespace ART_OLC {
                 }
             }
         };
-        std::function<void(N *, uint8_t, uint32_t, const N *, uint64_t)> findStart = [&copy, &start, &findStart, &toContinue, this](
-                N *node, uint8_t nodeK, uint32_t level, const N *parentNode, uint64_t vp) {
+        std::function<void(N *, uint8_t, uint32_t, N *, uint64_t)> findStart = [&copy, &start, &findStart, &toContinue, this](
+                N *node, uint8_t nodeK, uint32_t level, N *parentNode, uint64_t vp) {
             if (N::isLeaf(node)) {
                 copy(node);
                 return;
@@ -121,13 +126,13 @@ namespace ART_OLC {
             {
                 readAgain:
                 bool needRestart = false;
-                v = node->readLockOrRestart(needRestart);
+                v = node->readLockOrRestart(pop, needRestart);
                 if (needRestart) goto readAgain;
 
                 prefixResult = checkPrefixCompare(node, start, 0, level, loadKey, needRestart);
                 if (needRestart) goto readAgain;
 
-                parentNode->readUnlockOrRestart(vp, needRestart);
+                parentNode->readUnlockOrRestart(pop, vp, needRestart);
                 if (needRestart) {
                     readParentAgain:
                     vp = parentNode->readLockOrRestart(needRestart);
@@ -135,7 +140,7 @@ namespace ART_OLC {
 
                     node = N::getChild(nodeK, parentNode);
 
-                    parentNode->readUnlockOrRestart(vp, needRestart);
+                    parentNode->readUnlockOrRestart(pop, vp, needRestart);
                     if (needRestart) goto readParentAgain;
 
                     if (node == nullptr) {
@@ -147,7 +152,7 @@ namespace ART_OLC {
                     }
                     goto readAgain;
                 }
-                node->readUnlockOrRestart(v, needRestart);
+                node->readUnlockOrRestart(pop, v, needRestart);
                 if (needRestart) goto readAgain;
             }
 
@@ -178,8 +183,8 @@ namespace ART_OLC {
                     break;
             }
         };
-        std::function<void(N *, uint8_t, uint32_t, const N *, uint64_t)> findEnd = [&copy, &end, &toContinue, &findEnd, this](
-                N *node, uint8_t nodeK, uint32_t level, const N *parentNode, uint64_t vp) {
+        std::function<void(N *, uint8_t, uint32_t, N *, uint64_t)> findEnd = [&copy, &end, &toContinue, &findEnd, this](
+                N *node, uint8_t nodeK, uint32_t level, N *parentNode, uint64_t vp) {
             if (N::isLeaf(node)) {
                 return;
             }
@@ -188,13 +193,13 @@ namespace ART_OLC {
             {
                 readAgain:
                 bool needRestart = false;
-                v = node->readLockOrRestart(needRestart);
+                v = node->readLockOrRestart(pop, needRestart);
                 if (needRestart) goto readAgain;
 
                 prefixResult = checkPrefixCompare(node, end, 255, level, loadKey, needRestart);
                 if (needRestart) goto readAgain;
 
-                parentNode->readUnlockOrRestart(vp, needRestart);
+                parentNode->readUnlockOrRestart(pop, vp, needRestart);
                 if (needRestart) {
                     readParentAgain:
                     vp = parentNode->readLockOrRestart(needRestart);
@@ -202,7 +207,7 @@ namespace ART_OLC {
 
                     node = N::getChild(nodeK, parentNode);
 
-                    parentNode->readUnlockOrRestart(vp, needRestart);
+                    parentNode->readUnlockOrRestart(pop, vp, needRestart);
                     if (needRestart) goto readParentAgain;
 
                     if (node == nullptr) {
@@ -213,7 +218,7 @@ namespace ART_OLC {
                     }
                     goto readAgain;
                 }
-                node->readUnlockOrRestart(v, needRestart);
+                node->readUnlockOrRestart(pop, v, needRestart);
                 if (needRestart) goto readAgain;
             }
             switch (prefixResult) {
@@ -261,15 +266,15 @@ namespace ART_OLC {
             vp = v;
             node = nextNode;
             PCEqualsResults prefixResult;
-            v = node->readLockOrRestart(needRestart);
+            v = node->readLockOrRestart(pop, needRestart);
             if (needRestart) goto restart;
             prefixResult = checkPrefixEquals(node, level, start, end, loadKey, needRestart);
             if (needRestart) goto restart;
             if (parentNode != nullptr) {
-                parentNode->readUnlockOrRestart(vp, needRestart);
+                parentNode->readUnlockOrRestart(pop, vp, needRestart);
                 if (needRestart) goto restart;
             }
-            node->readUnlockOrRestart(v, needRestart);
+            node->readUnlockOrRestart(pop, v, needRestart);
             if (needRestart) goto restart;
 
             switch (prefixResult) {
@@ -303,7 +308,7 @@ namespace ART_OLC {
                         }
                     } else {
                         nextNode = N::getChild(startLevel, node);
-                        node->readUnlockOrRestart(v, needRestart);
+                        node->readUnlockOrRestart(pop, v, needRestart);
                         if (needRestart) goto restart;
                         level++;
                         continue;
@@ -322,16 +327,18 @@ namespace ART_OLC {
     }
 
 
-    TID Tree::checkKey(const TID tid, const Key &k) const {
+    TID Tree::checkKey(pool_base &pop, const TID tid, const Key &k) const {
         Key kt;
-        this->loadKey(tid, kt);
+	transaction::run(pop, [&]{
+	        this->loadKey(tid, kt);
+	});
         if (k == kt) {
             return tid;
         }
         return 0;
     }
 
-    void Tree::insert(const Key &k, TID tid, ThreadInfo &epocheInfo) {
+    void Tree::insert(pool_base &pop, const Key &k, TID tid, ThreadInfo &epocheInfo) {
         EpocheGuard epocheGuard(epocheInfo);
         restart:
         bool needRestart = false;
@@ -347,7 +354,7 @@ namespace ART_OLC {
             parentNode = node;
             parentKey = nodeKey;
             node = nextNode;
-            auto v = node->readLockOrRestart(needRestart);
+            auto v = node->readLockOrRestart(pop, needRestart);
             if (needRestart) goto restart;
 
             uint32_t nextLevel = level;
@@ -359,30 +366,33 @@ namespace ART_OLC {
             if (needRestart) goto restart;
             switch (res) {
                 case CheckPrefixPessimisticResult::NoMatch: {
-                    parentNode->upgradeToWriteLockOrRestart(parentVersion, needRestart);
+                    parentNode->upgradeToWriteLockOrRestart(pop, parentVersion, needRestart);
                     if (needRestart) goto restart;
 
-                    node->upgradeToWriteLockOrRestart(v, needRestart);
+                    node->upgradeToWriteLockOrRestart(pop, v, needRestart);
                     if (needRestart) {
-                        parentNode->writeUnlock();
+                        parentNode->writeUnlock(pop);
                         goto restart;
                     }
                     // 1) Create new node which will be parent of node, Set common prefix, level to this node
-                    auto newNode = new N4(node->getPrefix(), nextLevel - level);
+                    p<N4> newNode; 
+		    transaction::run(pop, [&]{	
+			newNode = make_persistent<N4>(node->getPrefix(), nextLevel - level);
+		     });
 
                     // 2)  add node and (tid, *k) as children
-                    newNode->insert(k[nextLevel], N::setLeaf(tid));
-                    newNode->insert(nonMatchingKey, node);
+                    newNode->insert(pop, k[nextLevel], N::setLeaf(tid));
+                    newNode->insert(pop, nonMatchingKey, node);
 
                     // 3) upgradeToWriteLockOrRestart, update parentNode to point to the new node, unlock
-                    N::change(parentNode, parentKey, newNode);
-                    parentNode->writeUnlock();
+                    N::change(pop, parentNode, parentKey, newNode);
+                    parentNode->writeUnlock(pop);
 
                     // 4) update prefix of node, unlock
-                    node->setPrefix(remainingPrefix,
+                    node->setPrefix(pop, remainingPrefix,
                                     node->getPrefixLength() - ((nextLevel - level) + 1));
 
-                    node->writeUnlock();
+                    node->writeUnlock(pop);
                     return;
                 }
                 case CheckPrefixPessimisticResult::Match:
@@ -391,22 +401,22 @@ namespace ART_OLC {
             level = nextLevel;
             nodeKey = k[level];
             nextNode = N::getChild(nodeKey, node);
-            node->checkOrRestart(v,needRestart);
-            if (needRestart) goto restart;
+//            node->checkOrRestart(v,needRestart);
+//            if (needRestart) goto restart;
 
             if (nextNode == nullptr) {
-                N::insertAndUnlock(node, v, parentNode, parentVersion, parentKey, nodeKey, N::setLeaf(tid), needRestart, epocheInfo);
+                N::insertAndUnlock(pop, node, v, parentNode, parentVersion, parentKey, nodeKey, N::setLeaf(tid), needRestart, epocheInfo);
                 if (needRestart) goto restart;
                 return;
             }
 
-            if (parentNode != nullptr) {
+/*            if (parentNode != nullptr) {
                 parentNode->readUnlockOrRestart(parentVersion, needRestart);
                 if (needRestart) goto restart;
-            }
+            }*/
 
             if (N::isLeaf(nextNode)) {
-                node->upgradeToWriteLockOrRestart(v, needRestart);
+                node->upgradeToWriteLockOrRestart(pop, v, needRestart);
                 if (needRestart) goto restart;
 
                 Key key;
@@ -418,11 +428,14 @@ namespace ART_OLC {
                     prefixLength++;
                 }
 
-                auto n4 = new N4(&k[level], prefixLength);
-                n4->insert(k[level + prefixLength], N::setLeaf(tid));
-                n4->insert(key[level + prefixLength], nextNode);
-                N::change(node, k[level - 1], n4);
-                node->writeUnlock();
+                p<N4> n4 ;
+		transaction::run(pop, [&]{
+			n4 = make_persistent<N4>(&k[level], prefixLength);
+		});
+                n4->insert(pop, k[level + prefixLength], N::setLeaf(tid));
+                n4->insert(pop, key[level + prefixLength], nextNode);
+                N::change(pop, node, k[level - 1], n4);
+                node->writeUnlock(pop);
                 return;
             }
             level++;
@@ -430,7 +443,7 @@ namespace ART_OLC {
         }
     }
 
-    void Tree::remove(const Key &k, TID tid, ThreadInfo &threadInfo) {
+    void Tree::remove(pool_base &pop, const Key &k, TID tid, ThreadInfo &threadInfo) {
         EpocheGuard epocheGuard(threadInfo);
         restart:
         bool needRestart = false;
@@ -446,12 +459,12 @@ namespace ART_OLC {
             parentNode = node;
             parentKey = nodeKey;
             node = nextNode;
-            auto v = node->readLockOrRestart(needRestart);
+            auto v = node->readLockOrRestart(pop, needRestart);
             if (needRestart) goto restart;
 
             switch (checkPrefix(node, k, level)) { // increases level
                 case CheckPrefixResult::NoMatch:
-                    node->readUnlockOrRestart(v, needRestart);
+                    node->readUnlockOrRestart(pop, v, needRestart);
                     if (needRestart) goto restart;
                     return;
                 case CheckPrefixResult::OptimisticMatch:
@@ -460,26 +473,27 @@ namespace ART_OLC {
                     nodeKey = k[level];
                     nextNode = N::getChild(nodeKey, node);
 
-                    node->checkOrRestart(v, needRestart);
-                    if (needRestart) goto restart;
+//                    node->checkOrRestart(v, needRestart);
+//                    if (needRestart) goto restart;
 
                     if (nextNode == nullptr) {
-                        node->readUnlockOrRestart(v, needRestart);
+                        node->readUnlockOrRestart(pop, v, needRestart);
                         if (needRestart) goto restart;
                         return;
                     }
+                    node->readUnlockOrRestart(pop, v, needRestart);
                     if (N::isLeaf(nextNode)) {
                         if (N::getLeaf(nextNode) != tid) {
                             return;
                         }
                         assert(parentNode == nullptr || node->getCount() != 1);
                         if (node->getCount() == 2 && parentNode != nullptr) {
-                            parentNode->upgradeToWriteLockOrRestart(parentVersion, needRestart);
+                            parentNode->upgradeToWriteLockOrRestart(pop, parentVersion, needRestart);
                             if (needRestart) goto restart;
 
-                            node->upgradeToWriteLockOrRestart(v, needRestart);
+                            node->upgradeToWriteLockOrRestart(pop, v, needRestart);
                             if (needRestart) {
-                                parentNode->writeUnlock();
+                                parentNode->writeUnlock(pop);
                                 goto restart;
                             }
                             // 1. check remaining entries
@@ -488,31 +502,31 @@ namespace ART_OLC {
                             std::tie(secondNodeN, secondNodeK) = N::getSecondChild(node, nodeKey);
                             if (N::isLeaf(secondNodeN)) {
                                 //N::remove(node, k[level]); not necessary
-                                N::change(parentNode, parentKey, secondNodeN);
+                                N::change(pop, parentNode, parentKey, secondNodeN);
 
-                                parentNode->writeUnlock();
-                                node->writeUnlockObsolete();
+                                parentNode->writeUnlock(pop);
+                                node->writeUnlockObsolete(pop);
                                 this->epoche.markNodeForDeletion(node, threadInfo);
                             } else {
-                                secondNodeN->writeLockOrRestart(needRestart);
+                                secondNodeN->writeLockOrRestart(pop, needRestart);
                                 if (needRestart) {
-                                    node->writeUnlock();
-                                    parentNode->writeUnlock();
+                                    node->writeUnlock(pop);
+                                    parentNode->writeUnlock(pop);
                                     goto restart;
                                 }
 
                                 //N::remove(node, k[level]); not necessary
-                                N::change(parentNode, parentKey, secondNodeN);
-                                parentNode->writeUnlock();
+                                N::change(pop, parentNode, parentKey, secondNodeN);
+                                parentNode->writeUnlock(pop);
 
-                                secondNodeN->addPrefixBefore(node, secondNodeK);
-                                secondNodeN->writeUnlock();
+                                secondNodeN->addPrefixBefore(pop, node, secondNodeK);
+                                secondNodeN->writeUnlock(pop);
 
-                                node->writeUnlockObsolete();
+                                node->writeUnlockObsolete(pop);
                                 this->epoche.markNodeForDeletion(node, threadInfo);
                             }
                         } else {
-                            N::removeAndUnlock(node, v, k[level], parentNode, parentVersion, parentKey, needRestart, threadInfo);
+                            N::removeAndUnlock(pop, node, v, k[level], parentNode, parentVersion, parentKey, needRestart, threadInfo);
                             if (needRestart) goto restart;
                         }
                         return;
@@ -578,7 +592,7 @@ namespace ART_OLC {
         return CheckPrefixPessimisticResult::Match;
     }
 
-    typename Tree::PCCompareResults Tree::checkPrefixCompare(const N *n, const Key &k, uint8_t fillKey, uint32_t &level,
+    typename Tree::PCCompareResults Tree::checkPrefixCompare(N *n, const Key &k, uint8_t fillKey, uint32_t &level,
                                                         LoadKeyFunction loadKey, bool &needRestart) {
         if (n->hasPrefix()) {
             Key kt;
@@ -602,7 +616,7 @@ namespace ART_OLC {
         return PCCompareResults::Equal;
     }
 
-    typename Tree::PCEqualsResults Tree::checkPrefixEquals(const N *n, uint32_t &level, const Key &start, const Key &end,
+    typename Tree::PCEqualsResults Tree::checkPrefixEquals(N *n, uint32_t &level, const Key &start, const Key &end,
                                                       LoadKeyFunction loadKey, bool &needRestart) {
         if (n->hasPrefix()) {
             Key kt;

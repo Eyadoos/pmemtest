@@ -1,22 +1,34 @@
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.6.3)
 project(ARTSynchronized)
 
-if( NOT CMAKE_BUILD_TYPE )
-    message(STATUS "No build type selected, default to Release")
-    set( CMAKE_BUILD_TYPE Release)
-else()
-    message(STATUS "Build type is set to ${CMAKE_BUILD_TYPE}")
-endif()
-
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14 -Wall -Wextra -march=native -g")
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED True)
 
 find_library(JemallocLib jemalloc)
-find_library(TbbLib tbb)
-find_package (Threads)
+find_package(Threads)
+set(Tbb $ENV{TBBROOT}/lib/intel64/gcc4.7/libtbb.so)
 
-set(ART_FILES OptimisticLockCoupling/Tree.cpp ROWEX/Tree.cpp ART/Tree.cpp)
-add_library(ARTSynchronized ${ART_FILES})
-target_link_libraries(ARTSynchronized ${TbbLib} ${JemallocLib} ${CMAKE_THREAD_LIBS_INIT})
+include(FetchContent REQUIRED)
+find_package(PkgConfig REQUIRED)
+ 
+set(THIRD_PARTY_DIR "${PROJECT_BINARY_DIR}/_deps")
+ 
+# Searching for PMDK ======================================================== #
+message(STATUS "Searching for PMDK")
+find_path(PMDK_INCLUDE_DIR libpmem.h)
+pkg_check_modules(PMDK REQUIRED libpmemobj++>=1.5)
+set(PMDK_INCLUDE_DIRS ${PMDK_INCLUDE_DIRS} ${PMDK_INCLUDE_DIR})
+if(NOT PMDK_INCLUDE_DIRS OR "${PMDK_INCLUDE_DIRS}" STREQUAL "")
+  message(FATAL_ERROR "ERROR: libpmem include directory not found.")
+endif()
+message(STATUS "  libpmem.h found in ${PMDK_INCLUDE_DIRS}")
+mark_as_advanced(PMDK_LIBRARIES PMDK_INCLUDE_DIRS)
+
+include_directories( $ENV{TBBROOT}/include ./Include ./ART/Include ./Lock/Include ./OptimisticLockCoupling/Include ./ROWEX/Include )
+
+set(ART_FILES Lock/Tree.cpp OptimisticLockCoupling/Tree.cpp ROWEX/Tree.cpp ART/Tree.cpp)
+add_library(ARTSynchronized ${ART_FILES}) 
+target_link_libraries(ARTSynchronized ${Tbb} ${JemallocLib} ${CMAKE_THREAD_LIBS_INIT})
 
 
 set(SOURCE_FILES example.cpp)

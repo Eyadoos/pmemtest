@@ -2,7 +2,7 @@
 #include <algorithm>
 #include "Include/N.h"
 
-namespace ART_OLC {
+namespace ART_LC {
 
     bool N48::isFull() const {
         return count == 48;
@@ -12,18 +12,20 @@ namespace ART_OLC {
         return count == 12;
     }
 
-    void N48::insert(uint8_t key, N *n) {
+    void N48::insert(pool_base &pop, uint8_t key, N *n) {
         unsigned pos = count;
         if (children[pos]) {
             for (pos = 0; children[pos] != nullptr; pos++);
         }
+	transaction::run(pop, [&]{
         children[pos] = n;
         childIndex[key] = (uint8_t) pos;
         count++;
+	});
     }
 
     template<class NODE>
-    void N48::copyTo(NODE *n) const {
+    void N48::copyTo(NODE n) const {
         for (unsigned i = 0; i < 256; i++) {
             if (childIndex[i] != emptyMarker) {
                 n->insert(i, children[childIndex[i]]);
@@ -31,8 +33,10 @@ namespace ART_OLC {
         }
     }
 
-    bool N48::change(uint8_t key, N *val) {
-        children[childIndex[key]] = val;
+    bool N48::change(pool_base &pop, uint8_t key, N *val) {
+	transaction::run(pop, [&]{
+        	children[childIndex[key]] = val;
+	});
         return true;
     }
 
@@ -44,15 +48,17 @@ namespace ART_OLC {
         }
     }
 
-    void N48::remove(uint8_t k) {
+    void N48::remove(pool_base &pop, uint8_t k) {
         assert(childIndex[k] != emptyMarker);
-        children[childIndex[k]] = nullptr;
-        childIndex[k] = emptyMarker;
-        count--;
+	transaction::run(pop, [&]{
+	        children[childIndex[k]] = nullptr;
+        	childIndex[k] = emptyMarker;
+        	count--;
+	});
         assert(getChild(k) == nullptr);
     }
 
-    N *N48::getAnyChild() const {
+    N *N48::getAnyChild() {
         N *anyChild = nullptr;
         for (unsigned i = 0; i < 256; i++) {
             if (childIndex[i] != emptyMarker) {
@@ -76,7 +82,7 @@ namespace ART_OLC {
     }
 
     uint64_t N48::getChildren(uint8_t start, uint8_t end, std::tuple<uint8_t, N *> *&children,
-                          uint32_t &childrenCount) const {
+                          uint32_t &childrenCount) {
         restart:
         bool needRestart = false;
         uint64_t v;

@@ -7,10 +7,12 @@
 #include "N48.cpp"
 #include "N256.cpp"
 
-namespace ART_OLC {
+namespace ART_LC {
 
-    void N::setType(NTypes type) {
-        typeVersionLockObsolete.fetch_add(convertTypeToVersion(type));
+    void N::setType(pool_base &pop, NTypes type) {
+	transaction::run(pop, [&]{
+	        typeVersionLockObsolete.fetch_add(convertTypeToVersion(type));
+	});
     }
 
     uint64_t N::convertTypeToVersion(NTypes type) {
@@ -24,41 +26,48 @@ namespace ART_OLC {
     void N::writeLockOrRestart(bool &needRestart) {
 
         uint64_t version;
-        version = readLockOrRestart(needRestart);
+        version = typeVersionLockObsolete.load();
+        if (isLocked(version) || isObsolete(version)) {
+            needRestart = true;
+        }
         if (needRestart) return;
 
         upgradeToWriteLockOrRestart(version, needRestart);
         if (needRestart) return;
     }
 
-    void N::upgradeToWriteLockOrRestart(uint64_t &version, bool &needRestart) {
+    void N::upgradeToWriteLockOrRestart(pool_base &pop, uint64_t &version, bool &needRestart) {
+	transaction::run(pop, [&]{
         if (typeVersionLockObsolete.compare_exchange_strong(version, version + 0b10)) {
             version = version + 0b10;
         } else {
             needRestart = true;
         }
+	});
     }
 
-    void N::writeUnlock() {
-        typeVersionLockObsolete.fetch_add(0b10);
+    void N::writeUnlock(pool_base &pop) {
+	transaction::run(pop, [&]{
+	        typeVersionLockObsolete.fetch_sub(0b10);
+	});
     }
 
-    N *N::getAnyChild(const N *node) {
+    N *N::getAnyChild(N *node) {
         switch (node->getType()) {
             case NTypes::N4: {
-                auto n = static_cast<const N4 *>(node);
+                auto n = static_cast<N4 *>(node);
                 return n->getAnyChild();
             }
             case NTypes::N16: {
-                auto n = static_cast<const N16 *>(node);
+                auto n = static_cast<N16 *>(node);
                 return n->getAnyChild();
             }
             case NTypes::N48: {
-                auto n = static_cast<const N48 *>(node);
+                auto n = static_cast<N48 *>(node);
                 return n->getAnyChild();
             }
             case NTypes::N256: {
-                auto n = static_cast<const N256 *>(node);
+                auto n = static_cast<N256 *>(node);
                 return n->getAnyChild();
             }
         }
@@ -90,14 +99,14 @@ namespace ART_OLC {
     }
 
     template<typename curN, typename biggerN>
-    void N::insertGrow(curN *n, uint64_t v, N *parentNode, uint64_t parentVersion, uint8_t keyParent, uint8_t key, N *val, bool &needRestart, ThreadInfo &threadInfo) {
+    void N::insertGrow(pool_base &pop, curN *n, uint64_t v, N *parentNode, uint64_t parentVersion, uint8_t keyParent, uint8_t key, N *val, bool &needRestart, ThreadInfo &threadInfo) {
         if (!n->isFull()) {
-            if (parentNode != nullptr) {
+/*            if (parentNode != nullptr) {
                 parentNode->readUnlockOrRestart(parentVersion, needRestart);
                 if (needRestart) return;
-            }
+            }*/
             n->upgradeToWriteLockOrRestart(v, needRestart);
-            if (needRestart) return;
+            if (needRestare) return;
             n->insert(key, val);
             n->writeUnlock();
             return;
@@ -112,7 +121,11 @@ namespace ART_OLC {
             return;
         }
 
-        auto nBig = new biggerN(n->getPrefix(), n->getPrefixLength());
+	persistent_ptr<biggerN> nBig = nullptr;
+	transaction::run(pop, [&]{
+        	nBig = make_persistent<biggerN>(n->getPrefix(), n->getPrefixLength());
+	});
+
         n->copyTo(nBig);
         nBig->insert(key, val);
 
@@ -127,22 +140,22 @@ namespace ART_OLC {
         switch (node->getType()) {
             case NTypes::N4: {
                 auto n = static_cast<N4 *>(node);
-                insertGrow<N4, N16>(n, v, parentNode, parentVersion, keyParent, key, val, needRestart, threadInfo);
+                insertGrow<N4, N16>(pop, n, v, parentNode, parentVersion, keyParent, key, val, needRestart, threadInfo);
                 break;
             }
             case NTypes::N16: {
                 auto n = static_cast<N16 *>(node);
-                insertGrow<N16, N48>(n, v, parentNode, parentVersion, keyParent, key, val, needRestart, threadInfo);
+                insertGrow<N16, N48>(pop, n, v, parentNode, parentVersion, keyParent, key, val, needRestart, threadInfo);
                 break;
             }
             case NTypes::N48: {
                 auto n = static_cast<N48 *>(node);
-                insertGrow<N48, N256>(n, v, parentNode, parentVersion, keyParent, key, val, needRestart, threadInfo);
+                insertGrow<N48, N256>(pop, n, v, parentNode, parentVersion, keyParent, key, val, needRestart, threadInfo);
                 break;
             }
             case NTypes::N256: {
                 auto n = static_cast<N256 *>(node);
-                insertGrow<N256, N256>(n, v, parentNode, parentVersion, keyParent, key, val, needRestart, threadInfo);
+                insertGrow<N256, N256>(pop, n, v, parentNode, parentVersion, keyParent, key, val, needRestart, threadInfo);
                 break;
             }
         }
@@ -202,12 +215,12 @@ namespace ART_OLC {
     }
 
     template<typename curN, typename smallerN>
-    void N::removeAndShrink(curN *n, uint64_t v, N *parentNode, uint64_t parentVersion, uint8_t keyParent, uint8_t key, bool &needRestart, ThreadInfo &threadInfo) {
+    void N::removeAndShrink(pool_base &pop, curN *n, uint64_t v, N *parentNode, uint64_t parentVersion, uint8_t keyParent, uint8_t key, bool &needRestart, ThreadInfo &threadInfo) {
         if (!n->isUnderfull() || parentNode == nullptr) {
-            if (parentNode != nullptr) {
+/*            if (parentNode != nullptr) {
                 parentNode->readUnlockOrRestart(parentVersion, needRestart);
                 if (needRestart) return;
-            }
+            }*/
             n->upgradeToWriteLockOrRestart(v, needRestart);
             if (needRestart) return;
 
@@ -224,7 +237,10 @@ namespace ART_OLC {
             return;
         }
 
-        auto nSmall = new smallerN(n->getPrefix(), n->getPrefixLength());
+	persistent_ptr<smallerN> nSmall = nullptr;
+	transaction::run(pop, [&]{
+	        nSmall = make_persistent<smallerN>(n->getPrefix(), n->getPrefixLength());
+	});
 
         n->copyTo(nSmall);
         nSmall->remove(key);
@@ -264,15 +280,41 @@ namespace ART_OLC {
         return ((version & 0b10) == 0b10);
     }
 
-    uint64_t N::readLockOrRestart(bool &needRestart) const {
+    bool N::mutexLocked(uint8_t mutexVal) const {
+            return ((mutexVal & 0b10) == 0b10);
+    }
+
+    uint64_t N::readLockOrRestart(pool_base &pop, bool &needRestart) {
         uint64_t version;
+        uint8_t mutexVal;
         version = typeVersionLockObsolete.load();
+        
+        do {
+            mutexVal = mutex.load();
+        } while (mutexLocked(mutexVal));
+        
+	transaction::run(pop, [&]{
+	        mutex.fetch_add(0b10);
+        	++readerCount;
+	});
+        
+        if (readerCount == 1) writeLockOrRestart(needRestart); //upgradeToWriteLockOrRestart(version, needRestart);
+	
+	transaction::run(pop, [&]{
+	        if (needRestart) {
+        	        --readerCount;
+                	mutex.fetch_sub(0b10);
+	        } else {
+        	        mutex.fetch_sub(0b10);
+	        }
+	});
+
 /*        do {
             version = typeVersionLockObsolete.load();
-        } while (isLocked(version));*/
+        } while (isLocked(version));
         if (isLocked(version) || isObsolete(version)) {
             needRestart = true;
-        }
+        }*/
         return version;
         //uint64_t version;
         //while (isLocked(version)) _mm_pause();
@@ -283,12 +325,29 @@ namespace ART_OLC {
         return (version & 1) == 1;
     }
 
-    void N::checkOrRestart(uint64_t startRead, bool &needRestart) const {
+    void N::checkOrRestart(uint64_t startRead, bool &needRestart) {
         readUnlockOrRestart(startRead, needRestart);
     }
 
-    void N::readUnlockOrRestart(uint64_t startRead, bool &needRestart) const {
+    void N::readUnlockOrRestart(pool_base &pop, uint64_t startRead, bool &needRestart) {
+        uint8_t mutexVal;
+        do {
+            mutexVal = mutex.load();
+        } while (mutexLocked(mutexVal));
+     
+	transaction::run(pop, [&]{
+	   	mutex.fetch_add(0b10);
+        	--readerCount;
+	});
+
+        if (readerCount == 0) writeUnlock();
+        
+	transaction::run(pop, [&]{
+		mutex.fetch_sub(0b10);
+	});
+
         needRestart = (startRead != typeVersionLockObsolete.load());
+        if (needRestart) return;
     }
 
     uint32_t N::getPrefixLength() const {
@@ -307,16 +366,19 @@ namespace ART_OLC {
         return prefix;
     }
 
-    void N::setPrefix(const uint8_t *prefix, uint32_t length) {
-        if (length > 0) {
-            memcpy(this->prefix, prefix, std::min(length, maxStoredPrefixLength));
-            prefixCount = length;
-        } else {
-            prefixCount = 0;
-        }
+    void N::setPrefix(pool_base &pop, const uint8_t *prefix, uint32_t length) {
+	transaction::run(pop, [&]{
+	        if (length > 0) {
+        	    memcpy(this->prefix, prefix, std::min(length, maxStoredPrefixLength));
+		    prefixCount = length;
+	        } else {
+        	    prefixCount = 0;
+        	}
+	});
     }
 
-    void N::addPrefixBefore(N *node, uint8_t key) {
+    void N::addPrefixBefore(pool_base &pop, N *node, uint8_t key) {
+	transaction::run(pop, [&]{
         uint32_t prefixCopyCount = std::min(maxStoredPrefixLength, node->getPrefixLength() + 1);
         memmove(this->prefix + prefixCopyCount, this->prefix,
                 std::min(this->getPrefixLength(), maxStoredPrefixLength - prefixCopyCount));
@@ -325,6 +387,7 @@ namespace ART_OLC {
             this->prefix[prefixCopyCount - 1] = key;
         }
         this->prefixCount += node->getPrefixLength() + 1;
+	});
     }
 
 
@@ -353,43 +416,54 @@ namespace ART_OLC {
         }
     }
 
-    void N::deleteNode(N *node) {
+    void N::deleteNode(pool_base &pop, N *node) {
         if (N::isLeaf(node)) {
             return;
         }
         switch (node->getType()) {
             case NTypes::N4: {
                 auto n = static_cast<N4 *>(node);
-                delete n;
+		transaction::run(pop, [&]{
+	                delete_persistent<N4>(n);
+		});
                 return;
             }
             case NTypes::N16: {
                 auto n = static_cast<N16 *>(node);
-                delete n;
+             	transaction::run(pop, [&]{
+			delete_persistent<N16>(n);
+		});
                 return;
             }
             case NTypes::N48: {
                 auto n = static_cast<N48 *>(node);
-                delete n;
+                transaction::run(pop, [&]{
+			delete_persistent<N48>(n);
+		});
                 return;
             }
             case NTypes::N256: {
                 auto n = static_cast<N256 *>(node);
-                delete n;
+                transaction::run(pop, [&]{
+			delete_persistent<N256>(n);
+		});
                 return;
             }
         }
-        delete node;
+	transaction::run(pop, [&]{
+	        delete_persistent<N>(node);
+	});
     }
 
 
-    TID N::getAnyChildTid(const N *n, bool &needRestart) {
-        const N *nextNode = n;
+    TID N::getAnyChildTid(N *n, bool &needRestart) {
+        N *nextNode = n;
 
         while (true) {
-            const N *node = nextNode;
-            auto v = node->readLockOrRestart(needRestart);
-            if (needRestart) return 0;
+            N *node = nextNode;
+            auto v = node->typeVersionLockObsolete.load();
+//            auto v = node->readLockOrRestart(needRestart);
+//            if (needRestart) return 0;
 
             nextNode = getAnyChild(node);
             node->readUnlockOrRestart(v, needRestart);
@@ -402,23 +476,23 @@ namespace ART_OLC {
         }
     }
 
-    uint64_t N::getChildren(const N *node, uint8_t start, uint8_t end, std::tuple<uint8_t, N *> children[],
+    uint64_t N::getChildren(N *node, uint8_t start, uint8_t end, std::tuple<uint8_t, N *> children[],
                         uint32_t &childrenCount) {
         switch (node->getType()) {
             case NTypes::N4: {
-                auto n = static_cast<const N4 *>(node);
+                auto n = static_cast<N4 *>(node);
                 return n->getChildren(start, end, children, childrenCount);
             }
             case NTypes::N16: {
-                auto n = static_cast<const N16 *>(node);
+                auto n = static_cast<N16 *>(node);
                 return n->getChildren(start, end, children, childrenCount);
             }
             case NTypes::N48: {
-                auto n = static_cast<const N48 *>(node);
+                auto n = static_cast<N48 *>(node);
                 return n->getChildren(start, end, children, childrenCount);
             }
             case NTypes::N256: {
-                auto n = static_cast<const N256 *>(node);
+                auto n = static_cast<N256 *>(node);
                 return n->getChildren(start, end, children, childrenCount);
             }
         }

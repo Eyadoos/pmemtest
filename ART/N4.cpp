@@ -1,6 +1,6 @@
 #include <assert.h>
 #include <algorithm>
-#include "N.h"
+#include "Include/N.h"
 
 namespace ART_unsynchronized {
 
@@ -67,7 +67,7 @@ namespace ART_unsynchronized {
     }
 
     N *N4::getAnyChild() const {
-        N *anyChild;
+        N *anyChild = nullptr;
         for (uint32_t i = 0; i < 4; ++i) {
             if (children[i] != nullptr) {
                 if (N::isLeaf(children[i])) {

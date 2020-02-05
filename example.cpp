@@ -4,9 +4,10 @@
 
 using namespace std;
 
-#include "OptimisticLockCoupling/Tree.h"
-#include "ROWEX/Tree.h"
-#include "ART/Tree.h"
+#include "OptimisticLockCoupling/Include/Tree.h"
+#include "ROWEX/Include/Tree.h"
+#include "ART/Include/Tree.h"
+#include "Lock/Include/Tree.h"
 
 void loadKey(TID tid, Key &key) {
     // Store the key of the tuple into the key vector
@@ -83,7 +84,7 @@ void singlethreaded(char **argv) {
     std::cout << std::endl;
 }
 
-void multithreaded(char **argv) {
+void multithreaded(pool_base &pop, char **argv) {
     std::cout << "multi threaded:" << std::endl;
 
     uint64_t n = std::atoll(argv[1]);
@@ -102,8 +103,9 @@ void multithreaded(char **argv) {
             keys[i] = (static_cast<uint64_t>(rand()) << 32) | static_cast<uint64_t>(rand());
 
     printf("operation,n,ops/s\n");
-    ART_OLC::Tree tree(loadKey);
+    //ART_OLC::Tree tree(loadKey);
     //ART_ROWEX::Tree tree(loadKey);
+    ART_LC::Tree tree(loadKey);
 
     // Build tree
     {
@@ -113,7 +115,7 @@ void multithreaded(char **argv) {
             for (uint64_t i = range.begin(); i != range.end(); i++) {
                 Key key;
                 loadKey(keys[i], key);
-                tree.insert(key, keys[i], t);
+                tree.insert(pop, key, keys[i], t); // TODO send pool as parameter
             }
         });
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -129,7 +131,7 @@ void multithreaded(char **argv) {
             for (uint64_t i = range.begin(); i != range.end(); i++) {
                 Key key;
                 loadKey(keys[i], key);
-                auto val = tree.lookup(key, t);
+                auto val = tree.lookup(pop, key, t);
                 if (val != keys[i]) {
                     std::cout << "wrong key read: " << val << " expected:" << keys[i] << std::endl;
                     throw;
@@ -142,6 +144,7 @@ void multithreaded(char **argv) {
     }
 
     {
+        // Remove operation
         auto starttime = std::chrono::system_clock::now();
 
         tbb::parallel_for(tbb::blocked_range<uint64_t>(0, n), [&](const tbb::blocked_range<uint64_t> &range) {
@@ -160,14 +163,27 @@ void multithreaded(char **argv) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        printf("usage: %s n 0|1|2\nn: number of keys\n0: sorted keys\n1: dense keys\n2: sparse keys\n", argv[0]);
+    if (argc != 4) {
+        printf("usage: %s n 0|1|2 <pool_path>\nn: number of keys\n0: sorted keys\n1: dense keys\n2: sparse keys\n", argv[0]);
         return 1;
     }
 
+    auto path = argv[3];
+    pool<N> pop;
+    try {
+	if (access(path.c_str(), F_OK) != 0){
+		pop = pool<N>::create(path, LAYOUT, PMEMOBJ_MIN_POOL, CREATE_MODE_RW);
+	} else {
+		pop = pool<N>::open(path, LAYOUT);
+	}
+    } catch(pool_error &e) {
+	std::cerr << e.what() << std::endl;
+    }
+    auto q = pop.root();
+
     singlethreaded(argv);
 
-    multithreaded(argv);
+    multithreaded(pop, argv);
 
     return 0;
 }
