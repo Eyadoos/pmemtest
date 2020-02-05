@@ -221,17 +221,17 @@ namespace ART_LC {
                 parentNode->readUnlockOrRestart(parentVersion, needRestart);
                 if (needRestart) return;
             }*/
-            n->upgradeToWriteLockOrRestart(v, needRestart);
+            n->upgradeToWriteLockOrRestart(pop, v, needRestart);
             if (needRestart) return;
 
             n->remove(key);
             n->writeUnlock();
             return;
         }
-        parentNode->upgradeToWriteLockOrRestart(parentVersion, needRestart);
+        parentNode->upgradeToWriteLockOrRestart(pop, parentVersion, needRestart);
         if (needRestart) return;
 
-        n->upgradeToWriteLockOrRestart(v, needRestart);
+        n->upgradeToWriteLockOrRestart(pop, v, needRestart);
         if (needRestart) {
             parentNode->writeUnlock();
             return;

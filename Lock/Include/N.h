@@ -45,9 +45,9 @@ namespace ART_LC {
 
     class N {
     protected:
-        N(NTypes type, const uint8_t *prefix, uint32_t prefixLength) {
-            setType(type);
-            setPrefix(prefix, prefixLength);
+        N(pool_base &pop, NTypes type, const uint8_t *prefix, uint32_t prefixLength) {
+            setType(pop, type);
+            setPrefix(pop, prefix, prefixLength);
         }
 
         N(const N &) = delete;
@@ -163,7 +163,7 @@ namespace ART_LC {
         persistent_ptr<N> children[4] = {nullptr, nullptr, nullptr, nullptr};
 
     public:
-        N4(const uint8_t *prefix, uint32_t prefixLength) : N(NTypes::N4, prefix,
+        N4(pool_base &pop, const uint8_t *prefix, uint32_t prefixLength) : N(NTypes::N4, prefix,
                                                                              prefixLength) { }
 
         void insert(pool_base &pop, uint8_t key, N *n);
@@ -218,7 +218,7 @@ namespace ART_LC {
         N *const *getChildPos(const uint8_t k) const;
 
     public:
-        N16(const uint8_t *prefix, uint32_t prefixLength) : N(NTypes::N16, prefix,
+        N16(pool_base &pop, const uint8_t *prefix, uint32_t prefixLength) : N(NTypes::N16, prefix,
                                                                               prefixLength) {
             memset(keys, 0, sizeof(keys));
             memset(children, 0, sizeof(children));
@@ -253,7 +253,7 @@ namespace ART_LC {
     public:
         static const uint8_t emptyMarker = 48;
 
-        N48(const uint8_t *prefix, uint32_t prefixLength) : N(NTypes::N48, prefix,
+        N48(pool_base &pop, const uint8_t *prefix, uint32_t prefixLength) : N(NTypes::N48, prefix,
                                                                               prefixLength) {
             memset(childIndex, emptyMarker, sizeof(childIndex));
             memset(children, 0, sizeof(children));
@@ -286,7 +286,7 @@ namespace ART_LC {
         persistent_ptr<N> children[256];
 
     public:
-        N256(const uint8_t *prefix, uint32_t prefixLength) : N(NTypes::N256, prefix,
+        N256(pool_base &pop, const uint8_t *prefix, uint32_t prefixLength) : N(NTypes::N256, prefix,
                                                                                prefixLength) {
             memset(children, '\0', sizeof(children));
         }
